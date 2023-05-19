@@ -1,65 +1,47 @@
 import { Request, Response } from "express";
+import { AuthBasic } from "./auth";
+import { getCommandHadler } from "./commands";
+import xml2js from 'xml2js';
+import { ICommandResult, IWebDavReqest } from "./commands/WebDawRequest";
+import { FileSystem } from "./FileSystem";
+import { config } from "../../config";
+import { TreeFS } from "../db/models/treefiles";
 
-
-
-class Auth {
-    type: string;
-    nounce: string = '';
-    constructor(type: string) {
-        this.type = type;
-    }
-    async check(req: Request, res: Response) {
-        console.log('user', req.user?.name);
-        const hasAuth = req.get('Authorization');
-        if (req.user && !hasAuth) {
-            if (this.type === 'Digest') {
-                res.setHeader('WWW-Authenticate', `Digest realm=default, algorithm=SHA-256, ${this.nounce}`);
-            } else {
-                res.setHeader('WWW-Authenticate', 'Basic realm=default, charset="UTF8"');
-            }
-
-            throw ({ status: 401, error: 'AUTH' });
-        }
-
-        req.user = {
-            name: 'user'
-        };
-
-        return req.user
-    }
-}
-class AuthBasic extends Auth {
-    constructor() {
-        super('Basic')
-    }
-
-}
-
-class AuthDigest extends Auth {
-    constructor() {
-        super('Digest')
-        super.nounce = 'sdf76577dd6s5df8asFG6d5f';
-    }
-
-}
 
 export class DAVServer {
-    auth: Auth = new AuthBasic();
 
-    // constructor() {
-    // }
+  auth = new AuthBasic();
+  fileSystem: FileSystem = new FileSystem('/testdav');
 
-    async requestHandler(req: Request, res: Response) {
+  constructor() { }
 
-        console.log(req.method);
-        console.log(req.headers);
+  async requestHandler(req: Request, res: Response) {
 
-        res.setHeader('content-type', 'application/xml');
-        return this.auth.check(req, res).then((resp) => {
-            res.status(200).send('gggggg');
-        }).catch((e) => {
-            res.sendStatus(e.status);
-        });
+    console.log(req.method);
+
+    await this.auth.check(req, res).catch((e) => {
+      res.sendStatus(e.status);
+      throw new Error(('NOT AUTH'));
+    });
+    const command = getCommandHadler(req.method);
+    const response: ICommandResult = await command.run(req, res, this);
+    const result = {
+      'multistatus': {
+        '$': { 'xmlns': 'DAV:' },
+        response: response?.value
+      }
     }
+
+    const builder = new xml2js.Builder({});
+    const xml = builder.buildObject(result);
+
+    console.log(xml)
+
+
+    res.setHeader('content-type', 'application/xml');
+    res.setHeader('allow', 'PROPPATCH,PROPFIND,OPTIONS,DELETE,UNLOCK,COPY,LOCK,MOVE')
+    res.setHeader('DAV', '1,2');
+    res.status(response.status).send(xml);
+  }
 
 }

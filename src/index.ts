@@ -1,35 +1,58 @@
-import express, { Express, Request, Response } from 'express';
+import express, { Express, NextFunction, Request, Response } from 'express';
 import dotenv from 'dotenv';
 import { DAVServer } from './myDav';
+import { mongoinit } from './myDav/db/mongodb';
+import bodyParser from 'body-parser';
+import xmlBodyParser from 'body-parser-xml';
+import { config } from './config';
+import { davPath } from './myDav/helper';
+import { processors } from 'xml2js'
+const stripprefix = processors.stripPrefix;
 
+xmlBodyParser(bodyParser);
 dotenv.config();
+mongoinit();
 
 const app: Express = express();
-const port = process.env.PORT || 5000;
 
-app.options('/', () => {
-  console.log(1111)
-});
-// app.options('/dav', () => {
-//   console.log(222)
+// app.get('/', (req: Request, res: Response) => {
+//   console.log('in root')
+//   res.send('Express + TypeScript Server!!!!');
 // });
 
+
 const davServer = new DAVServer();
-app.use('/dav', (req: Request, res: Response) => {
-  console.log('in dav');
-  davServer.requestHandler(req, res).then(resp => {
-    console.log('---');
-  })
-  // .catch(e =>{
-  //   console.log(e);
-  // });
-});
+let rawBodySaver = function (req: Request, _: Response, buf: Buffer, encoding: BufferEncoding) {
+  if (buf && buf.length) {
+    req.rawBody = buf;
+  }
+}
 
-app.get('/', (req: Request, res: Response) => {
-  console.log('in root')
-  res.send('Express + TypeScript Server!!!!');
-});
+const checkheadres = (req: Request, res: Response, next: NextFunction): void => {
+  if (!req.headers['content-type']) req.headers['content-type'] = 'application/octet-stream';
+  next();
+}
 
-app.listen(port, () => {
-  console.log(`⚡️[server]: Server is running at http://localhost:${port}`);
+app.use(checkheadres);
+app.use(bodyParser.xml({ verify: rawBodySaver, xmlParseOptions: { tagNameProcessors: [stripprefix] } }));
+app.use(bodyParser.raw({ verify: rawBodySaver, inflate: true, limit: '1000mb', type: '*/*' }));
+
+
+app.use('/',
+  (req: Request, res: Response) => {
+    davPath(req);
+    console.log('in dav');
+    davServer.requestHandler(req, res)
+      .then(resp => {
+        console.log('***');
+      })
+      .catch(e => {
+        console.log(e);
+      });
+  });
+
+
+
+app.listen(config.port, () => {
+  console.log(`⚡️[server]: Server is running at http://localhost:${config.port}`);
 });
